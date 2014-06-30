@@ -1,0 +1,172 @@
+import urllib, urllib2, cookielib
+
+BASE_URL = 'http://www.wareztuga.tv/'
+USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_7_2) AppleWebKit/534.51.22 (KHTML, like Gecko) Version/5.1.1 Safari/534.51.22'
+
+def MetadataObjectForURL(url):
+    Log.Debug('===== METADATA Fetched ====')
+    html = HTML.ElementFromURL(url)
+    el = html.xpath('.//div[@class="player-aux"]')[0]
+    return MetadataObjectForElement(el)
+    
+
+def MetadataObjectForElement(element):
+    #Movie information
+    movie_info_div = element.xpath('./div[2]')[0]
+    title = movie_info_div.xpath('./a')[0].text
+    url = BASE_URL + movie_info_div.xpath('./a/@href')[0]
+    year = int(movie_info_div.xpath('./div/div/span[@class="year"]/span')[0].tail)
+    summary = movie_info_div.get_element_by_id('movie-synopsis-aux').text
+    rating = float(movie_info_div.find_class('average')[0].text)
+    directors = movie_info_div.xpath('./div[@class="movie-detailed-info"]/div[2]/span[@class="director"]')[0].text.split(', ')
+    cast = movie_info_div.xpath('./div[@class="movie-detailed-info"]/div[2]/span[@class="director"]')[1].text.split(', ')
+    genres = movie_info_div.find_class('genre')[0].text.split(', ')
+    original_title = movie_info_div.find_class('original-name')[0].text.strip('-" ')
+    
+    # Thumbnail
+    img_tag = element.xpath('./div[1]//img')[0]
+    thumb_src = BASE_URL + img_tag.get('src')
+    
+    return MovieObject(title = title,
+                       year = year,
+                       summary = summary,
+                       thumb = thumb_src,
+                       directors = directors,
+                       genres = genres,
+                       original_title = original_title,
+                       rating = rating)
+
+
+def MediaObjectsForURL(url):
+    Log.Debug('===== MEDIAOBJECT Requested ====')
+    return [
+        MediaObject(
+            container = Container.MP4,
+            video_codec = VideoCodec.H264,
+            audio_codec = AudioCodec.AAC,
+            video_frame_rate = 24,
+            parts = [
+                PartObject(key=Callback(GetMediaURL, url=url))
+            ]
+        )
+    ]
+
+
+def Login():
+    username = Prefs['username']
+    password = Prefs['password']
+    
+    Log.Debug('===> Attempting to login user "%s"' % username)
+    login_url = BASE_URL + 'login.ajax.php?username=%s&password=%s' % (username, password)
+    login_request = HTTP.Request(url=login_url, immediate=True)
+    login_response = login_request.content
+    Log.Debug('===> Login returned "%s"' % login_response)
+    
+    if login_response == '0':
+        return True
+    return False
+
+
+@indirect
+def GetMediaURL(url):
+    mediaID, mediaType = GetMediaID(url)
+    container = GetFileHost(mediaID, mediaType)
+    Log.Debug('### THIS IS WHAT MEDIA URL RETURNS: %s' % container)
+    return container
+
+
+def GetMediaID(url, attempt_login=True):
+    Log.Debug('### Parsing media ID and Type ###')
+    html = HTML.ElementFromURL(url)
+    try:
+        mediaID = html.get_element_by_id('mediaID').get('value')
+        mediaType = html.get_element_by_id('mediaType').get('value')
+        return (mediaID, mediaType)
+    except:
+        if (attempt_login and Login()):
+            Log.Debug('## User is logged out. Attempt to login again.')
+            return GetMediaID(url, False)
+        else:
+            return False
+            
+    
+def GetFileHost(mediaID, mediaType):
+    Log.Debug('### Determining File Host URL ###')
+    hosts_url = BASE_URL + 'getFilehosts.ajax.php?mediaID=%s&mediaType=%s' % (mediaID, mediaType)
+    Log.Debug(hosts_url)
+    html = HTML.ElementFromURL(hosts_url)
+    links = html.xpath('//a/@href')
+    
+    link = ''
+    for l in links:
+        link = l[l.find('http://', 1):]
+        if len(link) > 0:
+            break
+    
+    link = Sockshare(link)
+    
+    return link
+    
+def Sockshare(url):
+    Log.Debug('### Going to Sockshare ###')
+    Log.Debug(url)
+    
+    # First step (the button "continue as free user")
+    first_page = HTML.ElementFromURL(url)
+    form = first_page.xpath('//form')[0]
+    hash = form.xpath('./input')[0].get('value')
+    Log.Debug('Got the hash for accessing file: %s' % hash)
+    
+    # Second step (the link to the media file)
+    second_page = HTML.ElementFromURL(
+        url,
+        {'hash': hash, 'confirm': 'Continue as Free User'},
+        cacheTime=0
+    )
+    second_page.make_links_absolute(base_url='http://www.sockshare.com')
+    file_link = second_page.xpath('//a[@class="download_file_link"]')[0].get('href')
+    Log.Debug('File link is %s' % file_link)
+    
+    # Third step (redirect for the video file)
+    # We don't want to follow the 302 redirect, so we create an opener to get the file link, instead of downloading it.
+    final_request = urllib2.Request(file_link)
+    final_request.add_header('User-agent', USER_AGENT)
+    final_request.add_header('Accept-Encoding','gzip, deflate')
+    cookies = cookielib.CookieJar()
+    opener = urllib2.build_opener(
+        urllib2.HTTPCookieProcessor(cookies), NoRedirectHandler()
+    )
+    response = opener.open(final_request)
+    final_url = response.headers['Location']
+    Log.Debug('CDN link is %s' % final_url)
+    
+    # Fourth step: Intercept the CDN redirect to get the final location
+    req = urllib2.Request(final_url)
+    req.add_header('User-Agent', USER_AGENT)
+    response = urllib2.urlopen(req)
+    final_url = response.geturl()
+    Log.Debug('CDN redirect is to %s' % final_url)
+  
+    oc = ObjectContainer(
+		objects = [
+			VideoClipObject(
+				items = [
+					MediaObject(
+						parts = [PartObject(key=final_url)]
+					)
+				]
+			)
+		]
+	)
+    oc.user_agent = USER_AGENT
+    return oc
+    
+
+# urlib2 handler which doesn't automatically follow 302, but which instead returns the new
+# location.
+class NoRedirectHandler(urllib2.HTTPRedirectHandler):
+    def http_error_302(self, req, fp, code, msg, headers):
+        infourl = urllib.addinfourl(fp, headers, req.get_full_url())
+        infourl.status = code
+        infourl.code = code
+        return infourl
