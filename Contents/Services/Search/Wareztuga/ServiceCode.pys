@@ -1,0 +1,32 @@
+BASE_URL = 'http://www.wareztuga.tv/'
+
+def Search(query):
+    oc = ObjectContainer()
+    
+    # Search movies
+    movies_url = BASE_URL + 'pagination.ajax.php?mediaType=movies&words=' + query
+    movies_list = HTML.ElementFromURL(movies_url).get_element_by_id('movies-list')
+        
+    for el in movies_list:
+        oc.add(ObjectForElement(el))
+    
+    return oc
+    
+
+# Parse HTML to get media information
+def ObjectForElement(element):
+    Log.Debug(element.get('id'))
+    #Movie information
+    movie_info_div = element.xpath('./div[2]')[0]
+    title = movie_info_div.xpath('./a')[0].text
+    url = BASE_URL + movie_info_div.xpath('./a/@href')[0]
+    year = int(movie_info_div.xpath('//span[@class="year"]/span')[0].tail)
+    summary = movie_info_div.get_element_by_id('movie-synopsis-aux').text
+    
+    # Thumbnail
+    img_tag = element.xpath('./div[1]/div//img')[0]
+    thumb_src = BASE_URL + img_tag.get('src')
+
+    Log.Debug('Adding movie %s to search with URL: %s' % (title, url))
+
+    return MovieObject(title=title, year=year, summary=summary, thumb=thumb_src, url=url)
