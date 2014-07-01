@@ -7,7 +7,7 @@
 	<key>CFBundleExecutable</key>
 	<string></string>
 	<key>CFBundleIdentifier</key>
-	<string>mobi.uselink.plex.wareztuga</string>
+	<string>com.plexapp.plugins.wareztuga</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundlePackageType</key>
