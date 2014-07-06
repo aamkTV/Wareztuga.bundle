@@ -6,12 +6,15 @@ USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_7_2) AppleWebKit/534.51.
 def MetadataObjectForURL(url):
     Log.Debug('===== METADATA Fetched ====')
     html = HTML.ElementFromURL(url)
-    el = html.xpath('.//div[@class="player-aux"]')[0]
-    return MetadataObjectForElement(el)
+
+    if 'movie.php' in url:
+        return MovieObjectForElement(html)
+    return EpisodeObjectForElement(html)
     
 
-def MetadataObjectForElement(element):
+def MovieObjectForElement(html):
     #Movie information
+    element = html.xpath('.//div[@class="player-aux"]')[0]
     movie_info_div = element.xpath('./div[2]')[0]
     title = movie_info_div.xpath('./a')[0].text
     url = BASE_URL + movie_info_div.xpath('./a/@href')[0]
@@ -35,6 +38,14 @@ def MetadataObjectForElement(element):
                        genres = genres,
                        original_title = original_title,
                        rating = rating)
+
+
+def EpisodeObjectForElement(html):
+    episode = html.find_class('item slctd')[0]
+    title = episode.xpath('.//img/@alt')[0]
+    thumb = BASE_URL + episode.xpath('.//img/@src')[0]
+    return EpisodeObject(title = title,
+                         thumb = thumb)
 
 
 def MediaObjectsForURL(url):
